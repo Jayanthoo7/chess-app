@@ -1,0 +1,9 @@
+{
+  "name": "chess-app",
+  "version": "1.0.0",
+  "scripts": {
+    "dev:server": "cd server && node index.js",
+    "dev:client": "cd client && npx vite",
+    "install:all": "cd server && npm install && cd ../client && npm install"
+  }
+}

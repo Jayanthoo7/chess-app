@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #1a1a2e;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+
+.cell-light { background: #f0d9b5; }
+.cell-dark  { background: #b58863; }
+.cell-sel   { background: #f6f669 !important; }
+.cell-last-from { background: #cdd16f !important; }
+.cell-last-to   { background: #aaa23a !important; }
+.cell-check     { background: #ff4444 !important; }
+
+.legal-dot {
+  position: absolute;
+  width: 30%;
+  height: 30%;
+  border-radius: 50%;
+  background: rgba(20,85,30,0.5);
+  pointer-events: none;
+}
+.legal-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 4px solid rgba(20,85,30,0.5);
+  pointer-events: none;
+}
+
+.piece-glyph {
+  font-size: clamp(24px, 5vw, 42px);
+  line-height: 1;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+.board-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: filter 0.1s;
+}
+
+.board-cell:hover { filter: brightness(1.1); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 2px; }
+
+/* Clock pulse */
+@keyframes pulse-clock {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.clock-active { animation: pulse-clock 1s infinite; }
+
+/* Promotion modal */
+.promo-piece {
+  font-size: 48px;
+  cursor: pointer;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #4a5568;
+  transition: background 0.1s;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.4);
+}
+.promo-piece:hover { background: #2d3748; }
