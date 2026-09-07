@@ -27,6 +27,8 @@ async function initDB() {
     status TEXT DEFAULT 'playing',
     winner TEXT,
     time_control INTEGER DEFAULT 600,
+    board_rows INTEGER DEFAULT 8,
+    board_state TEXT,
     created_at INTEGER,
     updated_at INTEGER
   )`);
@@ -65,6 +67,24 @@ async function initDB() {
     created_at INTEGER NOT NULL
   )`);
 
+  // Friend requests (pending/accepted/declined) — one row per request sent.
+  db.run(`CREATE TABLE IF NOT EXISTS friend_requests (
+    id TEXT PRIMARY KEY,
+    from_user_id TEXT NOT NULL,
+    to_user_id TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    responded_at INTEGER
+  )`);
+
+  // Accepted friendships — one row per pair, order doesn't matter (query with OR).
+  db.run(`CREATE TABLE IF NOT EXISTS friendships (
+    id TEXT PRIMARY KEY,
+    user_id_a TEXT NOT NULL,
+    user_id_b TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+
   // Best-effort migration for DBs created before white_user_id/black_user_id existed
   const gameCols = dbAll(`PRAGMA table_info(games)`).map(c => c.name);
   if (!gameCols.includes('white_user_id')) {
@@ -72,6 +92,12 @@ async function initDB() {
   }
   if (!gameCols.includes('black_user_id')) {
     try { db.run('ALTER TABLE games ADD COLUMN black_user_id TEXT'); } catch (e) {}
+  }
+  if (!gameCols.includes('board_rows')) {
+    try { db.run('ALTER TABLE games ADD COLUMN board_rows INTEGER DEFAULT 8'); } catch (e) {}
+  }
+  if (!gameCols.includes('board_state')) {
+    try { db.run('ALTER TABLE games ADD COLUMN board_state TEXT'); } catch (e) {}
   }
 
   saveDB();

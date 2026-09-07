@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useSocket } from '../context/SocketContext'
 
 const SERVER = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'
 
@@ -16,6 +17,7 @@ const TIME_CONTROLS = [
 export default function Home() {
   const navigate = useNavigate()
   const { user, logout } = useAuth()
+  const { onlineFriendIds } = useSocket()
   const name = user?.name || 'Player'
   const [timeControl, setTimeControl] = useState(600)
   const [roomId, setRoomId] = useState('')
@@ -76,10 +78,16 @@ export default function Home() {
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 2 }}>PLAYING AS</div>
             <div style={{ fontSize: 16, color: '#f1f5f9', fontWeight: 600 }}>{name}</div>
           </div>
-          <button onClick={() => { logout(); navigate('/login') }} style={{
-            padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
-            background: '#1e293b', border: '1px solid #334155', color: '#94a3b8',
-          }}>Log out</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => navigate('/friends')} style={{
+              padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
+              background: '#1e293b', border: '1px solid #334155', color: '#94a3b8',
+            }}>👥 Friends{onlineFriendIds.size > 0 ? ` (${onlineFriendIds.size})` : ''}</button>
+            <button onClick={() => { logout(); navigate('/login') }} style={{
+              padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
+              background: '#1e293b', border: '1px solid #334155', color: '#94a3b8',
+            }}>Log out</button>
+          </div>
         </div>
 
         {/* Tabs */}

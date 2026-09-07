@@ -37,6 +37,11 @@ export const api = {
   requestLoginOtp: (payload) => request('/api/auth/login-otp/request', { method: 'POST', body: payload }),
   verifyLoginOtp: (payload) => request('/api/auth/login-otp/verify', { method: 'POST', body: payload }),
   me: (token) => request('/api/auth/me', { token }),
+  sendFriendRequest: (payload, token) => request('/api/friends/request', { method: 'POST', body: payload, token }),
+  getFriendRequests: (token) => request('/api/friends/requests', { token }),
+  acceptFriendRequest: (id, token) => request(`/api/friends/requests/${id}/accept`, { method: 'POST', token }),
+  declineFriendRequest: (id, token) => request(`/api/friends/requests/${id}/decline`, { method: 'POST', token }),
+  getFriends: (token) => request('/api/friends', { token }),
 }
 
 export { SERVER }

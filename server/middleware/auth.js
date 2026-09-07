@@ -40,4 +40,15 @@ function signToken(user) {
   );
 }
 
-module.exports = { requireAuth, optionalAuth, signToken };
+// Verifies a raw JWT string (used for socket.io handshake auth, which has
+// no Authorization header). Returns the decoded payload or null.
+function verifyToken(token) {
+  if (!token) return null;
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch (e) {
+    return null;
+  }
+}
+
+module.exports = { requireAuth, optionalAuth, signToken, verifyToken };

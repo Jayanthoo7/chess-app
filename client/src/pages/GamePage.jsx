@@ -106,6 +106,14 @@ export default function GamePage() {
 
     socket.on('disconnect', () => setConnected(false))
 
+    // The shared socket may already be connected (it's kept alive globally
+    // for friend presence), in which case the 'connect' handler above won't
+    // fire again — join the room immediately instead of waiting for it.
+    if (socket.connected) {
+      setConnected(true)
+      socket.emit('join_room', { roomId: id, playerName: isSpectator ? `👁 ${playerName}` : playerName, userId })
+    }
+
     return () => {
       socket.off('connect')
       socket.off('joined')

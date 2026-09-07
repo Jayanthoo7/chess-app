@@ -8,8 +8,9 @@ const { v4: uuidv4 } = require('uuid');
 const { Chess } = require('chess.js');
 
 const { initDB, dbRun, dbGet, dbAll } = require('./db');
-const { optionalAuth } = require('./middleware/auth');
+const { optionalAuth, verifyToken } = require('./middleware/auth');
 const authRoutes = require('./routes/auth');
+const friendsRoutes = require('./routes/friends');
 
 const app = express();
 // Render (and most PaaS providers) put the app behind one reverse-proxy hop,
@@ -29,8 +30,45 @@ const PORT = process.env.PORT || 3001;
 // In-memory rooms for active games
 const rooms = {};
 
+// Online presence: userId -> Set of connected socket ids (a user can have
+// more than one tab/device open at once).
+const onlineUsers = new Map();
+
+// Pending game invites: inviteId -> { gameId, fromUserId, toUserId, timeControl }
+const pendingInvites = new Map();
+
+function getFriendIds(userId) {
+  const rows = dbAll(
+    `SELECT user_id_a, user_id_b FROM friendships WHERE user_id_a = ? OR user_id_b = ?`,
+    [userId, userId]
+  );
+  return rows.map(r => (r.user_id_a === userId ? r.user_id_b : r.user_id_a));
+}
+
+function emitToUser(userId, event, payload) {
+  const sockets = onlineUsers.get(userId);
+  if (!sockets) return;
+  for (const socketId of sockets) io.to(socketId).emit(event, payload);
+}
+
+function createStandardGame(timeControl, boardRows) {
+  const id = uuidv4();
+  const rows = [8, 10, 12].includes(boardRows) ? boardRows : 8;
+  const now = Date.now();
+  let fen = null;
+  if (rows === 8) {
+    fen = new Chess().fen();
+  }
+  dbRun(
+    `INSERT INTO games (id, fen, pgn, white_player, black_player, status, time_control, board_rows, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [id, fen || '', '', 'Waiting...', 'Waiting...', 'waiting', timeControl, rows, now, now]
+  );
+  return { id, fen, timeControl, boardRows: rows };
+}
+
 // Auth API (register / login / OTP / captcha)
 app.use('/api/auth', authRoutes);
+app.use('/api/friends', friendsRoutes);
 
 // REST API
 app.get('/api/games', (req, res) => {
@@ -46,18 +84,71 @@ app.get('/api/games/:id', (req, res) => {
 });
 
 app.post('/api/games', optionalAuth, (req, res) => {
-  const id = uuidv4();
-  const chess = new Chess();
-  const now = Date.now();
   const timeControl = req.body.timeControl || 600;
-  dbRun(`INSERT INTO games (id, fen, pgn, white_player, black_player, status, time_control, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)`,
-    [id, chess.fen(), '', 'Waiting...', 'Waiting...', 'waiting', timeControl, now, now]);
-  res.json({ id, fen: chess.fen(), timeControl });
+  const boardRows = Number(req.body.boardRows) || 8;
+  const game = createStandardGame(timeControl, boardRows);
+  res.json(game);
 });
 
 // Socket.io
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
+
+  // Every page that opens a socket connection is behind ProtectedRoute, so a
+  // real user is always logged in — authenticate via the JWT passed at
+  // handshake time (socket.io has no per-message Authorization header).
+  const decoded = verifyToken(socket.handshake.auth?.token);
+  if (decoded?.id) {
+    socket.data.userId = decoded.id;
+    if (!onlineUsers.has(decoded.id)) onlineUsers.set(decoded.id, new Set());
+    onlineUsers.get(decoded.id).add(socket.id);
+
+    // Tell any already-online friends this user just came online, and send
+    // this socket a snapshot of which of ITS friends are already online (the
+    // online/offline events above only cover future transitions).
+    const friendIds = getFriendIds(decoded.id);
+    for (const friendId of friendIds) {
+      emitToUser(friendId, 'friend_online', { userId: decoded.id });
+    }
+    socket.emit('online_friends', { userIds: friendIds.filter(id => onlineUsers.has(id)) });
+  }
+
+  socket.on('invite_friend', ({ toUserId, timeControl }) => {
+    const fromUserId = socket.data.userId;
+    if (!fromUserId) return;
+    const friendIds = getFriendIds(fromUserId);
+    if (!friendIds.includes(toUserId)) {
+      return socket.emit('invite_failed', { reason: 'not_friends' });
+    }
+    if (!onlineUsers.has(toUserId) || onlineUsers.get(toUserId).size === 0) {
+      return socket.emit('invite_failed', { reason: 'offline', toUserId });
+    }
+
+    const fromUser = dbGet(`SELECT id, name FROM users WHERE id = ?`, [fromUserId]);
+    const game = createStandardGame(timeControl || 600, 8);
+    const inviteId = uuidv4();
+    pendingInvites.set(inviteId, { gameId: game.id, fromUserId, toUserId, timeControl: game.timeControl });
+
+    emitToUser(toUserId, 'game_invite', {
+      inviteId,
+      gameId: game.id,
+      timeControl: game.timeControl,
+      fromUser: { id: fromUser.id, name: fromUser.name },
+    });
+    socket.emit('invite_sent', { inviteId, toUserId });
+  });
+
+  socket.on('respond_invite', ({ inviteId, accept }) => {
+    const invite = pendingInvites.get(inviteId);
+    if (!invite || invite.toUserId !== socket.data.userId) return;
+    pendingInvites.delete(inviteId);
+
+    if (accept) {
+      emitToUser(invite.fromUserId, 'invite_accepted', { inviteId, gameId: invite.gameId });
+    } else {
+      emitToUser(invite.fromUserId, 'invite_declined', { inviteId });
+    }
+  });
 
   socket.on('join_room', ({ roomId, playerName, userId }) => {
     if (!rooms[roomId]) {
@@ -231,6 +322,19 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
+
+    const userId = socket.data.userId;
+    if (userId && onlineUsers.has(userId)) {
+      const sockets = onlineUsers.get(userId);
+      sockets.delete(socket.id);
+      if (sockets.size === 0) {
+        onlineUsers.delete(userId);
+        for (const friendId of getFriendIds(userId)) {
+          emitToUser(friendId, 'friend_offline', { userId });
+        }
+      }
+    }
+
     for (const [roomId, room] of Object.entries(rooms)) {
       const colorEntry = Object.entries(room.players).find(([, p]) => p.id === socket.id);
       if (colorEntry) {
