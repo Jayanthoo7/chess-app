@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 
 const SERVER = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'
 
@@ -14,7 +15,8 @@ const TIME_CONTROLS = [
 
 export default function Home() {
   const navigate = useNavigate()
-  const [name, setName] = useState(() => localStorage.getItem('chess_name') || '')
+  const { user, logout } = useAuth()
+  const name = user?.name || 'Player'
   const [timeControl, setTimeControl] = useState(600)
   const [roomId, setRoomId] = useState('')
   const [creating, setCreating] = useState(false)
@@ -28,13 +30,7 @@ export default function Home() {
       .catch(() => {})
   }, [])
 
-  const saveName = (n) => {
-    setName(n)
-    localStorage.setItem('chess_name', n)
-  }
-
   const createGame = async () => {
-    if (!name.trim()) return alert('Enter your name first')
     setCreating(true)
     try {
       const res = await fetch(`${SERVER}/api/games`, {
@@ -43,7 +39,7 @@ export default function Home() {
         body: JSON.stringify({ timeControl }),
       })
       const data = await res.json()
-      navigate(`/game/${data.id}?name=${encodeURIComponent(name)}&tc=${timeControl}`)
+      navigate(`/game/${data.id}?name=${encodeURIComponent(name)}&uid=${encodeURIComponent(user.id)}&tc=${timeControl}`)
     } catch (e) {
       alert('Could not connect to server. Make sure server is running on port 3001.')
     } finally {
@@ -52,13 +48,11 @@ export default function Home() {
   }
 
   const joinGame = () => {
-    if (!name.trim()) return alert('Enter your name first')
     if (!roomId.trim()) return alert('Enter a room ID')
-    navigate(`/game/${roomId.trim()}?name=${encodeURIComponent(name)}`)
+    navigate(`/game/${roomId.trim()}?name=${encodeURIComponent(name)}&uid=${encodeURIComponent(user.id)}`)
   }
 
   const playAI = () => {
-    if (!name.trim()) return alert('Enter your name first')
     navigate(`/ai?name=${encodeURIComponent(name)}&tc=${timeControl}`)
   }
 
@@ -76,19 +70,16 @@ export default function Home() {
       </div>
 
       <div style={{ background: '#0f172a', borderRadius: 16, padding: 28, width: '100%', maxWidth: 420 }}>
-        {/* Name */}
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 6 }}>YOUR NAME</label>
-          <input
-            value={name}
-            onChange={e => saveName(e.target.value)}
-            placeholder="Enter name..."
-            style={{
-              width: '100%', padding: '10px 14px', borderRadius: 8,
-              background: '#1e293b', border: '1px solid #334155',
-              color: '#f1f5f9', fontSize: 15, outline: 'none',
-            }}
-          />
+        {/* Account */}
+        <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 2 }}>PLAYING AS</div>
+            <div style={{ fontSize: 16, color: '#f1f5f9', fontWeight: 600 }}>{name}</div>
+          </div>
+          <button onClick={() => { logout(); navigate('/login') }} style={{
+            padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
+            background: '#1e293b', border: '1px solid #334155', color: '#94a3b8',
+          }}>Log out</button>
         </div>
 
         {/* Tabs */}

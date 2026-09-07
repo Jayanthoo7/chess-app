@@ -11,6 +11,7 @@ export default function GamePage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const playerName = params.get('name') || 'Player'
+  const userId = params.get('uid') || null
   const isSpectator = params.get('spectate') === '1'
 
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
@@ -33,7 +34,7 @@ export default function GamePage() {
 
     socket.on('connect', () => {
       setConnected(true)
-      socket.emit('join_room', { roomId: id, playerName: isSpectator ? `👁 ${playerName}` : playerName })
+      socket.emit('join_room', { roomId: id, playerName: isSpectator ? `👁 ${playerName}` : playerName, userId })
     })
 
     socket.on('joined', (data) => {

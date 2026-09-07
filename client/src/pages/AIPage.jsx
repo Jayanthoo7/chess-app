@@ -4,6 +4,7 @@ import { Chess } from 'chess.js'
 import ChessBoard from '../components/ChessBoard'
 import Clock from '../components/Clock'
 import MoveHistory from '../components/MoveHistory'
+import { useStockfish } from '../hooks/useStockfish'
 
 const DIFFICULTY = [
   { label: 'Beginner', skill: 1, depth: 4 },
@@ -30,27 +31,16 @@ export default function AIPage() {
   const [difficulty, setDifficulty] = useState(DIFFICULTY[2])
   const [clocks, setClocks] = useState({ w: timeControl, b: timeControl })
   const [gameStarted, setGameStarted] = useState(false)
-  const [message, setMessage] = useState('')
   const [aiError, setAiError] = useState(false)
 
-  const stockfishRef = useRef(null)
+  const { getBestMove } = useStockfish()
   const clockRef = useRef(null)
   const turnRef = useRef('w')
   const clocksRef = useRef({ w: timeControl, b: timeControl })
+  const moveTokenRef = useRef(0) // guards against a stale AI reply landing after New Game / difficulty change
 
-  // Init Stockfish
   useEffect(() => {
-    try {
-      const sf = new Worker('https://cdn.jsdelivr.net/npm/stockfish.js@10.0.2/stockfish.js')
-      sf.postMessage('uci')
-      stockfishRef.current = sf
-    } catch (e) {
-      setAiError(true)
-    }
-    return () => {
-      stockfishRef.current?.terminate()
-      clearInterval(clockRef.current)
-    }
+    return () => clearInterval(clockRef.current)
   }, [])
 
   // Clock tick
@@ -94,39 +84,48 @@ export default function AIPage() {
     return false
   }, [chess, playerName])
 
-  const getAIMove = useCallback((currentFen) => {
-    if (!stockfishRef.current || gameOver) return
+  const getAIMove = useCallback(async (currentFen) => {
+    const token = ++moveTokenRef.current
     setThinking(true)
-    const sf = stockfishRef.current
 
-    const handler = (e) => {
-      const line = e.data
-      if (typeof line === 'string' && line.startsWith('bestmove')) {
-        sf.removeEventListener('message', handler)
-        setThinking(false)
-        const parts = line.split(' ')
-        const best = parts[1]
-        if (!best || best === '(none)') return
-
-        const from = best.slice(0, 2)
-        const to = best.slice(2, 4)
-        const promo = best[4] || undefined
-
-        try {
-          chess.move({ from, to, promotion: promo || 'q' })
-          const mv = chess.history({ verbose: true }).slice(-1)[0]
-          if (mv) setLastMove({ from: mv.from, to: mv.to })
-          syncState()
-          checkGameOver()
-        } catch (err) {}
-      }
+    let uciMove = null
+    try {
+      uciMove = await getBestMove(currentFen, difficulty.depth, difficulty.skill)
+    } catch (e) {
+      uciMove = null
     }
 
-    sf.addEventListener('message', handler)
-    sf.postMessage(`setoption name Skill Level value ${difficulty.skill}`)
-    sf.postMessage(`position fen ${currentFen}`)
-    sf.postMessage(`go depth ${difficulty.depth}`)
-  }, [chess, difficulty, gameOver, syncState, checkGameOver])
+    // A New Game or difficulty change happened while we were waiting — drop this reply.
+    if (token !== moveTokenRef.current) return
+
+    setThinking(false)
+
+    let moveInput
+    if (uciMove) {
+      setAiError(false)
+      const from = uciMove.slice(0, 2)
+      const to = uciMove.slice(2, 4)
+      const promo = uciMove[4] || undefined
+      moveInput = { from, to, promotion: promo || 'q' }
+    } else {
+      // Engine unavailable or timed out — keep the game playable with a random legal move.
+      setAiError(true)
+      const legal = chess.moves({ verbose: true })
+      if (legal.length === 0) return
+      const random = legal[Math.floor(Math.random() * legal.length)]
+      moveInput = { from: random.from, to: random.to, promotion: random.promotion || 'q' }
+    }
+
+    try {
+      chess.move(moveInput)
+      const mv = chess.history({ verbose: true }).slice(-1)[0]
+      if (mv) setLastMove({ from: mv.from, to: mv.to })
+      syncState()
+      checkGameOver()
+    } catch (err) {
+      // Shouldn't happen, but never leave the game silently stuck.
+    }
+  }, [chess, difficulty, getBestMove, syncState, checkGameOver])
 
   const handlePlayerMove = useCallback((move) => {
     if (chess.turn() !== playerColor || gameOver) return
@@ -143,6 +142,7 @@ export default function AIPage() {
   }, [chess, playerColor, gameOver, syncState, checkGameOver, getAIMove])
 
   const newGame = () => {
+    moveTokenRef.current++ // invalidate any AI move still in flight
     chess.reset()
     clearInterval(clockRef.current)
     clocksRef.current = { w: timeControl, b: timeControl }
@@ -152,8 +152,8 @@ export default function AIPage() {
     setInCheck(false)
     setGameOver(null)
     setGameStarted(false)
+    setThinking(false)
     setClocks({ w: timeControl, b: timeControl })
-    setMessage('')
     turnRef.current = 'w'
   }
 
@@ -170,7 +170,7 @@ export default function AIPage() {
 
       {aiError && (
         <div style={{ background: '#7f1d1d', color: '#fca5a5', padding: '8px 16px', borderRadius: 8, marginBottom: 8, fontSize: 13 }}>
-          Stockfish failed to load. Moves will be random.
+          Couldn't reach the chess engine — Stockfish is playing random moves for now.
         </div>
       )}
 

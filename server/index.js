@@ -1,12 +1,15 @@
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const { Chess } = require('chess.js');
-const initSqlJs = require('sql.js');
-const fs = require('fs');
-const path = require('path');
+
+const { initDB, dbRun, dbGet, dbAll } = require('./db');
+const { optionalAuth } = require('./middleware/auth');
+const authRoutes = require('./routes/auth');
 
 const app = express();
 app.use(cors());
@@ -18,81 +21,12 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3001;
-const DB_PATH = path.join(__dirname, 'chess.db');
-
-let db;
-let SQL;
-
-async function initDB() {
-  SQL = await initSqlJs();
-  if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(fileBuffer);
-  } else {
-    db = new SQL.Database();
-  }
-
-  db.run(`CREATE TABLE IF NOT EXISTS games (
-    id TEXT PRIMARY KEY,
-    fen TEXT NOT NULL,
-    pgn TEXT,
-    white_player TEXT,
-    black_player TEXT,
-    status TEXT DEFAULT 'playing',
-    winner TEXT,
-    time_control INTEGER DEFAULT 600,
-    created_at INTEGER,
-    updated_at INTEGER
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS moves (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    game_id TEXT NOT NULL,
-    move_san TEXT NOT NULL,
-    fen_after TEXT NOT NULL,
-    move_number INTEGER,
-    color TEXT,
-    timestamp INTEGER
-  )`);
-
-  saveDB();
-}
-
-function saveDB() {
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
-}
-
-function dbRun(sql, params = []) {
-  db.run(sql, params);
-  saveDB();
-}
-
-function dbGet(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  if (stmt.step()) {
-    const row = stmt.getAsObject();
-    stmt.free();
-    return row;
-  }
-  stmt.free();
-  return null;
-}
-
-function dbAll(sql, params = []) {
-  const results = db.exec(sql, params);
-  if (!results.length) return [];
-  const { columns, values } = results[0];
-  return values.map(row => {
-    const obj = {};
-    columns.forEach((col, i) => obj[col] = row[i]);
-    return obj;
-  });
-}
 
 // In-memory rooms for active games
 const rooms = {};
+
+// Auth API (register / login / OTP / captcha)
+app.use('/api/auth', authRoutes);
 
 // REST API
 app.get('/api/games', (req, res) => {
@@ -107,7 +41,7 @@ app.get('/api/games/:id', (req, res) => {
   res.json({ ...game, moves });
 });
 
-app.post('/api/games', (req, res) => {
+app.post('/api/games', optionalAuth, (req, res) => {
   const id = uuidv4();
   const chess = new Chess();
   const now = Date.now();
@@ -121,7 +55,7 @@ app.post('/api/games', (req, res) => {
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
-  socket.on('join_room', ({ roomId, playerName }) => {
+  socket.on('join_room', ({ roomId, playerName, userId }) => {
     if (!rooms[roomId]) {
       rooms[roomId] = {
         chess: new Chess(),
@@ -149,7 +83,7 @@ io.on('connection', (socket) => {
 
     if (playerCount < 2 && !Object.values(room.players).find(p => p.id === socket.id)) {
       const color = playerCount === 0 ? 'w' : 'b';
-      room.players[color] = { id: socket.id, name: playerName || `Player ${playerCount + 1}` };
+      room.players[color] = { id: socket.id, name: playerName || `Player ${playerCount + 1}`, userId: userId || null };
 
       if (room.clocks.w === null) {
         room.clocks.w = room.timeControl;
@@ -166,11 +100,11 @@ io.on('connection', (socket) => {
         players: room.players,
       });
 
-      // Update DB player names
+      // Update DB player names + linked accounts
       const wp = room.players.w?.name || 'Waiting...';
       const bp = room.players.b?.name || 'Waiting...';
-      dbRun(`UPDATE games SET white_player=?, black_player=?, updated_at=? WHERE id=?`,
-        [wp, bp, Date.now(), roomId]);
+      dbRun(`UPDATE games SET white_player=?, black_player=?, white_user_id=?, black_user_id=?, updated_at=? WHERE id=?`,
+        [wp, bp, room.players.w?.userId || null, room.players.b?.userId || null, Date.now(), roomId]);
 
       if (Object.keys(room.players).length === 2) {
         room.gameStarted = true;
