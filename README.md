@@ -196,16 +196,39 @@ VITE_RECAPTCHA_SITE_KEY=...
 
 ## Deployment
 
-- **Server**: Deploy `server/` to Render (or any Node.js host — Railway, Fly.io). Set the same
-  environment variables from `server/.env` in the host's dashboard. Note that `sql.js` writes
-  `chess.db` to local disk, so on a host with an ephemeral filesystem (like Render's free tier)
-  the database resets on redeploy/restart — fine for testing, but for production durability
-  add a persistent disk or move to a hosted database.
-- **Client**: Run `npm run build` in `client/`, deploy the `dist/` folder to Vercel (or Netlify).
-  Set `VITE_SERVER_URL` and `VITE_RECAPTCHA_SITE_KEY` as environment variables in Vercel's
-  dashboard, pointing `VITE_SERVER_URL` at your deployed Render backend URL.
+### Server → Render
+
+A `render.yaml` Blueprint at the repo root already describes the service (root dir `server/`,
+`npm install`, `node index.js`, free plan). To use it:
+
+1. In the Render Dashboard: **New → Blueprint**, connect the `Jayanthoo7/chess-app` GitHub repo
+2. Render reads `render.yaml` and prompts you for the env vars marked secret: `JWT_SECRET`,
+   `RECAPTCHA_SECRET_KEY`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`, `CLIENT_URL` (your Vercel URL —
+   can be filled in after the client is deployed and the service redeployed)
+3. Deploy — note the resulting URL (e.g. `https://chess-app-server.onrender.com`)
+
+If you'd rather not use the Blueprint, **New → Web Service** with the same repo, root directory
+`server`, build command `npm install`, start command `node index.js`, and add the same env vars
+manually works identically.
+
+Note: `sql.js` writes `chess.db` to local disk, so on Render's free tier (ephemeral filesystem)
+the database resets on redeploy/restart — fine for testing, but for production durability add a
+persistent disk or move to a hosted database.
+
+### Client → Vercel
+
+1. In Vercel: **Add New → Project**, import the same GitHub repo
+2. Set **Root Directory** to `client` (Vercel auto-detects the Vite framework preset)
+3. Add environment variables: `VITE_SERVER_URL` = your Render URL from above,
+   `VITE_RECAPTCHA_SITE_KEY` = your reCAPTCHA site key
+4. Deploy — `client/vercel.json` is already set up so client-side routes (like `/game/:id`)
+   work on refresh/direct link instead of 404ing
+
+### After both are live
+
 - Add your Vercel domain to the reCAPTCHA admin console's **Domains** list, or the CAPTCHA
-  widget will fail to verify in production.
+  widget will fail to verify in production
+- Update the server's `CLIENT_URL` env var (on Render) to your Vercel URL, and redeploy the server
 
 ## 📸 Application Interface & Features
 
