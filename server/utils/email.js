@@ -1,36 +1,14 @@
-const nodemailer = require('nodemailer');
-
-let transporter = null;
-
-function getTransporter() {
-  if (transporter) return transporter;
-
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    return null;
-  }
-
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 465),
-    secure: Number(process.env.SMTP_PORT || 465) === 465,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    // Fail fast instead of hanging the request for nodemailer's 2-minute
-    // default — some hosts (e.g. free PaaS tiers) block outbound SMTP
-    // entirely, which otherwise looks like a stuck request rather than a
-    // clear, quick failure that falls back to console logging.
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 8000,
-  });
-
-  return transporter;
-}
+// Sends OTP emails via Brevo's HTTP API (https://api.brevo.com) instead of
+// raw SMTP. Gmail (and most mail providers) throttle or flat-out time out
+// SMTP connections coming from cloud/hosting IP ranges like Render's, which
+// is why plain nodemailer+Gmail worked locally but failed in production.
+// Brevo's API runs over plain HTTPS, so it isn't affected by that at all,
+// and its free tier (300 emails/day) needs only a single verified sender
+// email — not a whole custom domain.
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
 
 async function sendOtpEmail(to, code, purpose) {
-  const t = getTransporter();
+  const apiKey = process.env.BREVO_API_KEY;
   const subject = purpose === 'login'
     ? 'Your Chess App login code'
     : 'Verify your Chess App email';
@@ -44,26 +22,40 @@ async function sendOtpEmail(to, code, purpose) {
     </div>
   `;
 
-  if (!t) {
-    // No SMTP configured (e.g. local dev without a Gmail app password yet) —
-    // log the OTP to the server console instead of failing outright.
-    console.warn(`[email] SMTP not configured — OTP for ${to} (${purpose}): ${code}`);
+  if (!apiKey) {
+    // No Brevo API key configured (e.g. local dev) — log the OTP to the
+    // server console instead of failing outright.
+    console.warn(`[email] BREVO_API_KEY not configured — OTP for ${to} (${purpose}): ${code}`);
     return { delivered: false };
   }
 
   try {
-    await t.sendMail({
-      from: process.env.EMAIL_FROM || process.env.SMTP_USER,
-      to,
-      subject,
-      text,
-      html,
+    const res = await fetch(BREVO_API_URL, {
+      method: 'POST',
+      headers: {
+        'api-key': apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: { email: process.env.EMAIL_FROM, name: 'Chess App' },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html,
+        textContent: text,
+      }),
+      signal: AbortSignal.timeout(8000),
     });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Brevo API responded ${res.status}: ${body.slice(0, 300)}`);
+    }
     return { delivered: true };
   } catch (err) {
-    // Never let an SMTP failure (bad creds, blocked port, timeout, etc.) crash
-    // the process or fail the request — log it and fall back to the console,
-    // same as the "not configured" path above. The caller still succeeds.
+    // Never let a Brevo/network failure crash the process or fail the
+    // request — log it and fall back to the console, same as the
+    // unconfigured-key path above. The caller still succeeds.
     console.error(`[email] Failed to send OTP to ${to} (${purpose}): ${err.message}`);
     console.warn(`[email] OTP for ${to} (${purpose}): ${code}`);
     return { delivered: false, error: err.message };

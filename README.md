@@ -50,7 +50,7 @@ cp client/.env.example client/.env
 Then edit `server/.env` and `client/.env` — see **Authentication setup** below for how to get
 the CAPTCHA and email values. If you leave `RECAPTCHA_SECRET_KEY` / `VITE_RECAPTCHA_SITE_KEY`
 blank, CAPTCHA is skipped automatically (useful while developing locally). If you leave the
-`SMTP_*` values blank, OTP codes are printed to the **server console** instead of emailed —
+`BREVO_API_KEY` blank, OTP codes are printed to the **server console** instead of emailed —
 also handy for local testing without setting up email first.
 
 Generate a `JWT_SECRET` with:
@@ -86,16 +86,20 @@ Go to **http://localhost:5173** — you'll land on the sign-up/login page first.
 3. Under **Domains**, add both `localhost` and your production domain (you can add the production one later, once you know it)
 4. You'll get a **Site key** (put it in `client/.env` as `VITE_RECAPTCHA_SITE_KEY`) and a **Secret key** (put it in `server/.env` as `RECAPTCHA_SECRET_KEY`)
 
-### Gmail SMTP for OTP emails (free)
-1. Turn on 2-Step Verification on your Google account: https://myaccount.google.com/security
-2. Create an App Password: https://myaccount.google.com/apppasswords
-3. In `server/.env`, set:
+### Brevo API for OTP emails (free)
+Plain Gmail SMTP is unreliable from hosted servers (Render, Heroku, etc. often
+time out connecting to Gmail directly), so this app sends OTP emails through
+[Brevo](https://www.brevo.com)'s HTTPS API instead — free for up to 300
+emails/day, and it only needs a single verified sender email, not a domain.
+1. Sign up free at https://www.brevo.com
+2. Add and verify a sender (**Senders, Domains & Dedicated IPs → Senders**) —
+   your own Gmail address works fine, just click the confirmation link Brevo
+   emails you
+3. Create an API key (**SMTP & API → API Keys → Generate a new API key**)
+4. In `server/.env`, set:
    ```
-   SMTP_HOST=smtp.gmail.com
-   SMTP_PORT=465
-   SMTP_USER=youraddress@gmail.com
-   SMTP_PASS=the_16_character_app_password
-   EMAIL_FROM="Chess App <youraddress@gmail.com>"
+   BREVO_API_KEY=your_brevo_api_key
+   EMAIL_FROM=youraddress@gmail.com
    ```
 
 ### Phone numbers
@@ -138,7 +142,7 @@ chess-app/
 │   ├── middleware/
 │   │   └── auth.js          # JWT verification middleware
 │   ├── utils/
-│   │   ├── email.js         # Nodemailer (Gmail SMTP) OTP emails
+│   │   ├── email.js         # Brevo API OTP emails
 │   │   └── captcha.js       # Google reCAPTCHA server-side verification
 │   ├── chess.db              # SQLite database (auto-created)
 │   ├── .env.example
@@ -181,10 +185,8 @@ PORT=3001
 CLIENT_URL=http://localhost:5173
 JWT_SECRET=...
 RECAPTCHA_SECRET_KEY=...
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=465
-SMTP_USER=...
-SMTP_PASS=...
+BREVO_API_KEY=...
+EMAIL_FROM=...
 EMAIL_FROM="Chess App <...>"
 ```
 
@@ -203,7 +205,7 @@ A `render.yaml` Blueprint at the repo root already describes the service (root d
 
 1. In the Render Dashboard: **New → Blueprint**, connect the `Jayanthoo7/chess-app` GitHub repo
 2. Render reads `render.yaml` and prompts you for the env vars marked secret: `JWT_SECRET`,
-   `RECAPTCHA_SECRET_KEY`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`, `CLIENT_URL` (your Vercel URL —
+   `RECAPTCHA_SECRET_KEY`, `BREVO_API_KEY`, `EMAIL_FROM`, `CLIENT_URL` (your Vercel URL —
    can be filled in after the client is deployed and the service redeployed)
 3. Deploy — note the resulting URL (e.g. `https://chess-app-server.onrender.com`)
 
