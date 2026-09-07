@@ -12,6 +12,10 @@ const { optionalAuth } = require('./middleware/auth');
 const authRoutes = require('./routes/auth');
 
 const app = express();
+// Render (and most PaaS providers) put the app behind one reverse-proxy hop,
+// which sets X-Forwarded-For. Without this, express-rate-limit can't safely
+// derive the real client IP and throws on every request.
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 
@@ -257,6 +261,19 @@ function startClock(roomId) {
     }
   }, 1000);
 }
+
+// Catch-all error handler — must be last. Any error thrown or passed to
+// next() by a route (including via asyncHandler in routes/auth.js) ends up
+// here as a normal JSON 500 instead of crashing the process.
+app.use((err, req, res, next) => {
+  console.error('[server] Unhandled error:', err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Something went wrong. Please try again.' });
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('[server] Unhandled promise rejection:', err);
+});
 
 initDB().then(() => {
   server.listen(PORT, () => console.log(`Chess server running on port ${PORT}`));

@@ -17,6 +17,13 @@ function getTransporter() {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    // Fail fast instead of hanging the request for nodemailer's 2-minute
+    // default — some hosts (e.g. free PaaS tiers) block outbound SMTP
+    // entirely, which otherwise looks like a stuck request rather than a
+    // clear, quick failure that falls back to console logging.
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 8000,
   });
 
   return transporter;
@@ -44,14 +51,23 @@ async function sendOtpEmail(to, code, purpose) {
     return { delivered: false };
   }
 
-  await t.sendMail({
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
-    to,
-    subject,
-    text,
-    html,
-  });
-  return { delivered: true };
+  try {
+    await t.sendMail({
+      from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+      to,
+      subject,
+      text,
+      html,
+    });
+    return { delivered: true };
+  } catch (err) {
+    // Never let an SMTP failure (bad creds, blocked port, timeout, etc.) crash
+    // the process or fail the request — log it and fall back to the console,
+    // same as the "not configured" path above. The caller still succeeds.
+    console.error(`[email] Failed to send OTP to ${to} (${purpose}): ${err.message}`);
+    console.warn(`[email] OTP for ${to} (${purpose}): ${code}`);
+    return { delivered: false, error: err.message };
+  }
 }
 
 module.exports = { sendOtpEmail };

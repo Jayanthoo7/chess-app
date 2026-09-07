@@ -11,6 +11,12 @@ const { requireAuth, signToken } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Express 4 does not catch a rejected promise from an async handler — it
+// becomes an unhandled rejection and (on modern Node) crashes the whole
+// process. Wrap every async handler so a thrown/rejected error is forwarded
+// to Express's error middleware (see index.js) as a normal 500 instead.
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_OTP_ATTEMPTS = 5;
 
@@ -85,7 +91,7 @@ function verifyOtp(email, code, purpose) {
 }
 
 // ---- Register ----
-router.post('/register', async (req, res) => {
+router.post('/register', asyncHandler(async (req, res) => {
   const { name, email, password, phone, captchaToken } = req.body || {};
 
   if (!name || !isValidEmail(email) || !password) {
@@ -114,7 +120,7 @@ router.post('/register', async (req, res) => {
   await createAndSendOtp(normalizedEmail, 'verify');
 
   res.status(201).json({ message: 'Account created. Check your email for a verification code.', email: normalizedEmail });
-});
+}));
 
 // ---- Verify email (completes registration) ----
 router.post('/verify-email', (req, res) => {
@@ -134,7 +140,7 @@ router.post('/verify-email', (req, res) => {
 });
 
 // ---- Resend OTP (verify or login purpose) ----
-router.post('/resend-otp', otpLimiter, async (req, res) => {
+router.post('/resend-otp', otpLimiter, asyncHandler(async (req, res) => {
   const { email, purpose } = req.body || {};
   if (!isValidEmail(email) || !['verify', 'login'].includes(purpose)) {
     return res.status(400).json({ error: 'A valid email and purpose are required.' });
@@ -147,10 +153,10 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
     await createAndSendOtp(normalizedEmail, purpose);
   }
   res.json({ message: 'If that email is eligible, a new code has been sent.' });
-});
+}));
 
 // ---- Login with password (email OR phone as identifier) ----
-router.post('/login', async (req, res) => {
+router.post('/login', asyncHandler(async (req, res) => {
   const { identifier, password, captchaToken } = req.body || {};
   if (!identifier || !password) return res.status(400).json({ error: 'Identifier and password are required.' });
 
@@ -171,10 +177,10 @@ router.post('/login', async (req, res) => {
   dbRun(`UPDATE users SET last_login_at = ? WHERE id = ?`, [Date.now(), user.id]);
   const token = signToken(user);
   res.json({ token, user: sanitizeUser(user) });
-});
+}));
 
 // ---- Passwordless login: request an OTP ----
-router.post('/login-otp/request', otpLimiter, async (req, res) => {
+router.post('/login-otp/request', otpLimiter, asyncHandler(async (req, res) => {
   const { email, captchaToken } = req.body || {};
   if (!isValidEmail(email)) return res.status(400).json({ error: 'A valid email is required.' });
 
@@ -187,7 +193,7 @@ router.post('/login-otp/request', otpLimiter, async (req, res) => {
     await createAndSendOtp(normalizedEmail, 'login');
   }
   res.json({ message: 'If that email is registered, a login code has been sent.' });
-});
+}));
 
 // ---- Passwordless login: verify the OTP ----
 router.post('/login-otp/verify', (req, res) => {
