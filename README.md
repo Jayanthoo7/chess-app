@@ -206,3 +206,21 @@ VITE_RECAPTCHA_SITE_KEY=...
   dashboard, pointing `VITE_SERVER_URL` at your deployed Render backend URL.
 - Add your Vercel domain to the reCAPTCHA admin console's **Domains** list, or the CAPTCHA
   widget will fail to verify in production.
+
+## 📸 Application Interface & Features
+
+### Matchmaking & Game Configuration
+<img width="1440" height="900" alt="Screenshot 2026-06-29 at 19 28 10" src="https://github.com/user-attachments/assets/dcdabcbe-a2d0-4c08-949f-4b2015a648aa" />
+
+
+### Game Initialization & Waiting Room
+<img width="1440" height="900" alt="Screenshot 2026-06-29 at 19 28 20" src="https://github.com/user-attachments/assets/7e9ed890-39ac-46a6-928b-6fbfc4840336" />
+
+
+### Active Gameplay (White's Perspective)
+<img width="1440" height="900" alt="Screenshot 2026-06-29 at 19 29 01" src="https://github.com/user-attachments/assets/dac8424b-9551-4b8b-a00c-65320df4bd12" />
+
+
+### Active Gameplay (Black's Perspective)
+<img width="1440" height="900" alt="Screenshot 2026-06-29 at 19 29 08" src="https://github.com/user-attachments/assets/968958a5-028e-4eb6-8fbf-ef4a0803f99b" />
+
