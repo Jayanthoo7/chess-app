@@ -14,12 +14,21 @@ const TIME_CONTROLS = [
   { label: '30 min', seconds: 1800, tag: 'Classical' },
 ]
 
+// 10x8/12x8 add empty ranks in the middle — no man's land — and are online
+// player-vs-player only (Stockfish only understands the standard board).
+const BOARD_SIZES = [
+  { rows: 8, label: '8 × 8', tag: 'Standard' },
+  { rows: 10, label: '10 × 8', tag: 'Extended' },
+  { rows: 12, label: '12 × 8', tag: 'Extended' },
+]
+
 export default function Home() {
   const navigate = useNavigate()
   const { user, logout } = useAuth()
   const { onlineFriendIds } = useSocket()
   const name = user?.name || 'Player'
   const [timeControl, setTimeControl] = useState(600)
+  const [boardRows, setBoardRows] = useState(8)
   const [roomId, setRoomId] = useState('')
   const [creating, setCreating] = useState(false)
   const [recentGames, setRecentGames] = useState([])
@@ -38,7 +47,7 @@ export default function Home() {
       const res = await fetch(`${SERVER}/api/games`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timeControl }),
+        body: JSON.stringify({ timeControl, boardRows }),
       })
       const data = await res.json()
       navigate(`/game/${data.id}?name=${encodeURIComponent(name)}&uid=${encodeURIComponent(user.id)}&tc=${timeControl}`)
@@ -122,6 +131,32 @@ export default function Home() {
           </div>
         )}
 
+        {/* Board Size — online play only; Stockfish can't play non-standard boards */}
+        {tab === 'play' && (
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: 12, color: '#64748b', display: 'block', marginBottom: 8 }}>BOARD SIZE</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {BOARD_SIZES.map(bs => (
+                <button key={bs.rows} onClick={() => setBoardRows(bs.rows)} style={{
+                  ...btnBase, padding: '8px 4px', textAlign: 'center',
+                  background: boardRows === bs.rows ? '#1d4ed8' : '#1e293b',
+                  color: boardRows === bs.rows ? '#fff' : '#94a3b8',
+                  border: boardRows === bs.rows ? '1px solid #3b82f6' : '1px solid #334155',
+                  fontSize: 13,
+                }}>
+                  <div style={{ fontWeight: 600 }}>{bs.label}</div>
+                  <div style={{ fontSize: 10, opacity: 0.7 }}>{bs.tag}</div>
+                </button>
+              ))}
+            </div>
+            {boardRows !== 8 && (
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
+                Extra empty ranks in the middle — more board to cross before pieces meet.
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === 'play' && (
           <>
             <button onClick={createGame} disabled={creating} style={{
@@ -172,7 +207,10 @@ export default function Home() {
                   <span style={{ color: '#f1f5f9', fontSize: 13 }}>{g.white_player} vs {g.black_player}</span>
                   <span style={{ color: '#64748b', fontSize: 11 }}>{g.status}</span>
                 </div>
-                <div style={{ color: '#475569', fontSize: 11 }}>{g.id.slice(0, 8)}... · {Math.floor(g.time_control / 60)} min</div>
+                <div style={{ color: '#475569', fontSize: 11 }}>
+                  {g.id.slice(0, 8)}... · {Math.floor(g.time_control / 60)} min
+                  {g.board_rows && g.board_rows !== 8 ? ` · ${g.board_rows}×8 board` : ''}
+                </div>
               </div>
             ))}
           </div>

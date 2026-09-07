@@ -38,6 +38,7 @@ async function initDB() {
     game_id TEXT NOT NULL,
     move_san TEXT NOT NULL,
     fen_after TEXT NOT NULL,
+    state_after TEXT,
     move_number INTEGER,
     color TEXT,
     timestamp INTEGER
@@ -98,6 +99,13 @@ async function initDB() {
   }
   if (!gameCols.includes('board_state')) {
     try { db.run('ALTER TABLE games ADD COLUMN board_state TEXT'); } catch (e) {}
+  }
+
+  // state_after holds a variant-board JSON snapshot for 10x8/12x8 moves;
+  // fen_after (NOT NULL) stays '' for those rows since there's no FEN.
+  const moveCols = dbAll(`PRAGMA table_info(moves)`).map(c => c.name);
+  if (!moveCols.includes('state_after')) {
+    try { db.run('ALTER TABLE moves ADD COLUMN state_after TEXT'); } catch (e) {}
   }
 
   saveDB();

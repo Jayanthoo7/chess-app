@@ -11,6 +11,7 @@ const { initDB, dbRun, dbGet, dbAll } = require('./db');
 const { optionalAuth, verifyToken } = require('./middleware/auth');
 const authRoutes = require('./routes/auth');
 const friendsRoutes = require('./routes/friends');
+const { createInitialState, getLegalMovesByFrom, applyMove } = require('./chessVariant');
 
 const app = express();
 // Render (and most PaaS providers) put the app behind one reverse-proxy hop,
@@ -56,14 +57,23 @@ function createStandardGame(timeControl, boardRows) {
   const rows = [8, 10, 12].includes(boardRows) ? boardRows : 8;
   const now = Date.now();
   let fen = null;
+  let boardState = null;
   if (rows === 8) {
     fen = new Chess().fen();
+  } else {
+    // 10x8/12x8 use the custom engine's JSON state instead of a FEN.
+    boardState = JSON.stringify(createInitialState(rows));
   }
   dbRun(
-    `INSERT INTO games (id, fen, pgn, white_player, black_player, status, time_control, board_rows, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    [id, fen || '', '', 'Waiting...', 'Waiting...', 'waiting', timeControl, rows, now, now]
+    `INSERT INTO games (id, fen, pgn, white_player, black_player, status, time_control, board_rows, board_state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, fen || '', '', 'Waiting...', 'Waiting...', 'waiting', timeControl, rows, boardState, now, now]
   );
   return { id, fen, timeControl, boardRows: rows };
+}
+
+// Whichever engine is backing this room, this is whose turn it is.
+function roomTurn(room) {
+  return room.boardRows === 8 ? room.chess.turn() : room.variant.turn;
 }
 
 // Auth API (register / login / OTP / captcha)
@@ -152,8 +162,15 @@ io.on('connection', (socket) => {
 
   socket.on('join_room', ({ roomId, playerName, userId }) => {
     if (!rooms[roomId]) {
+      // Load from DB if exists — a game's board size is fixed at creation,
+      // so it decides once, up front, which engine this room uses.
+      const dbGame = dbGet(`SELECT * FROM games WHERE id = ?`, [roomId]);
+      const boardRows = [8, 10, 12].includes(dbGame?.board_rows) ? dbGame.board_rows : 8;
+
       rooms[roomId] = {
         chess: new Chess(),
+        variant: boardRows === 8 ? null : createInitialState(boardRows),
+        boardRows,
         players: {},
         spectators: [],
         clocks: { w: null, b: null },
@@ -162,19 +179,46 @@ io.on('connection', (socket) => {
         timeControl: 600,
         gameStarted: false,
       };
-      // Load from DB if exists
-      const dbGame = dbGet(`SELECT * FROM games WHERE id = ?`, [roomId]);
+
       if (dbGame) {
         rooms[roomId].timeControl = dbGame.time_control || 600;
         rooms[roomId].clocks = { w: dbGame.time_control || 600, b: dbGame.time_control || 600 };
-        if (dbGame.fen && dbGame.status === 'playing') {
-          try { rooms[roomId].chess.load(dbGame.fen); } catch(e) {}
+        if (dbGame.status === 'playing') {
+          if (boardRows === 8 && dbGame.fen) {
+            try { rooms[roomId].chess.load(dbGame.fen); } catch (e) {}
+          } else if (boardRows !== 8 && dbGame.board_state) {
+            try { rooms[roomId].variant = JSON.parse(dbGame.board_state); } catch (e) {}
+          }
         }
       }
     }
 
     const room = rooms[roomId];
     const playerCount = Object.keys(room.players).length;
+
+    // Standard games hand the client a FEN/PGN pair (unchanged from before);
+    // 10x8/12x8 games hand it the raw board plus a precomputed map of legal
+    // destinations for whichever pieces can move right now, so the client
+    // never needs its own copy of the rules engine.
+    function buildJoinedPayload(color) {
+      const base = {
+        color,
+        boardRows: room.boardRows,
+        clocks: room.clocks,
+        timeControl: room.timeControl,
+        players: room.players,
+      };
+      if (room.boardRows === 8) {
+        return { ...base, fen: room.chess.fen(), pgn: room.chess.pgn(), turn: room.chess.turn() };
+      }
+      return {
+        ...base,
+        board: room.variant.board,
+        legalMovesByFrom: getLegalMovesByFrom(room.variant),
+        turn: room.variant.turn,
+        inCheck: room.variant.inCheck,
+      };
+    }
 
     if (playerCount < 2 && !Object.values(room.players).find(p => p.id === socket.id)) {
       const color = playerCount === 0 ? 'w' : 'b';
@@ -186,14 +230,7 @@ io.on('connection', (socket) => {
       }
 
       socket.join(roomId);
-      socket.emit('joined', {
-        color,
-        fen: room.chess.fen(),
-        pgn: room.chess.pgn(),
-        clocks: room.clocks,
-        timeControl: room.timeControl,
-        players: room.players,
-      });
+      socket.emit('joined', buildJoinedPayload(color));
 
       // Update DB player names + linked accounts
       const wp = room.players.w?.name || 'Waiting...';
@@ -205,8 +242,12 @@ io.on('connection', (socket) => {
         room.gameStarted = true;
         io.to(roomId).emit('game_start', {
           players: room.players,
-          fen: room.chess.fen(),
+          boardRows: room.boardRows,
+          turn: roomTurn(room),
           clocks: room.clocks,
+          ...(room.boardRows === 8
+            ? { fen: room.chess.fen() }
+            : { board: room.variant.board, legalMovesByFrom: getLegalMovesByFrom(room.variant) }),
         });
         startClock(roomId);
       }
@@ -214,13 +255,7 @@ io.on('connection', (socket) => {
       // Spectator
       room.spectators.push(socket.id);
       socket.join(roomId);
-      socket.emit('joined', {
-        color: 'spectator',
-        fen: room.chess.fen(),
-        pgn: room.chess.pgn(),
-        clocks: room.clocks,
-        players: room.players,
-      });
+      socket.emit('joined', buildJoinedPayload('spectator'));
     }
 
     io.to(roomId).emit('room_update', {
@@ -235,8 +270,63 @@ io.on('connection', (socket) => {
 
     const playerColor = Object.entries(room.players).find(([, p]) => p.id === socket.id)?.[0];
     if (!playerColor) return;
-    if (room.chess.turn() !== playerColor) return;
+    if (roomTurn(room) !== playerColor) return;
 
+    if (room.boardRows !== 8) {
+      // ---- 10x8 / 12x8 path: the custom engine ----
+      const result = applyMove(room.variant, move.from, move.to, move.promotion);
+      if (!result.ok) {
+        socket.emit('invalid_move', { error: result.error });
+        return;
+      }
+      room.variant = result.state;
+
+      const moveNumber = Math.ceil(room.variant.moveHistory.length / 2);
+      const now = Date.now();
+      const stateJson = JSON.stringify(room.variant);
+
+      // fen_after is NOT NULL but meaningless here — variant games carry
+      // their position in state_after (JSON) instead.
+      dbRun(`INSERT INTO moves (game_id, move_san, fen_after, state_after, move_number, color, timestamp) VALUES (?,?,?,?,?,?,?)`,
+        [roomId, result.move.notation, '', stateJson, moveNumber, playerColor, now]);
+
+      dbRun(`UPDATE games SET board_state=?, updated_at=? WHERE id=?`,
+        [stateJson, now, roomId]);
+
+      if (room.clockInterval) {
+        clearInterval(room.clockInterval);
+        room.clockInterval = null;
+      }
+      room.lastMoveTime = now;
+
+      const status = room.variant.status;
+      const winner = room.variant.winner;
+
+      if (status !== 'playing') {
+        clearInterval(room.clockInterval);
+        dbRun(`UPDATE games SET status=?, winner=?, updated_at=? WHERE id=?`,
+          [status, winner, Date.now(), roomId]);
+      }
+
+      io.to(roomId).emit('move_made', {
+        move: result.move,
+        boardRows: room.boardRows,
+        board: room.variant.board,
+        legalMovesByFrom: getLegalMovesByFrom(room.variant),
+        turn: room.variant.turn,
+        clocks: room.clocks,
+        status,
+        winner,
+        inCheck: room.variant.inCheck,
+        isCheckmate: status === 'checkmate',
+        isDraw: status === 'draw' || status === 'stalemate',
+      });
+
+      if (status === 'playing') startClock(roomId);
+      return;
+    }
+
+    // ---- standard 8x8 path (chess.js), unchanged ----
     try {
       const result = room.chess.move(move);
       if (!result) return;
@@ -277,6 +367,7 @@ io.on('connection', (socket) => {
 
       io.to(roomId).emit('move_made', {
         move: result,
+        boardRows: 8,
         fen: room.chess.fen(),
         pgn: room.chess.pgn(),
         turn: room.chess.turn(),
@@ -352,7 +443,7 @@ function startClock(roomId) {
   if (room.clockInterval) clearInterval(room.clockInterval);
 
   room.clockInterval = setInterval(() => {
-    const turn = room.chess.turn();
+    const turn = roomTurn(room);
     room.clocks[turn] = Math.max(0, (room.clocks[turn] || 0) - 1);
 
     io.to(roomId).emit('clock_tick', { clocks: room.clocks, turn });

@@ -3,6 +3,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { Chess } from 'chess.js'
 import { connectSocket } from '../lib/socket'
 import ChessBoard from '../components/ChessBoard'
+import VariantChessBoard from '../components/VariantChessBoard'
 import Clock from '../components/Clock'
 import MoveHistory from '../components/MoveHistory'
 
@@ -26,6 +27,10 @@ export default function GamePage() {
   const [message, setMessage] = useState('')
   const [drawOffered, setDrawOffered] = useState(false)
   const [connected, setConnected] = useState(false)
+  const [boardRows, setBoardRows] = useState(8)
+  const [board, setBoard] = useState(null)
+  const [legalMovesByFrom, setLegalMovesByFrom] = useState({})
+  const [turn, setTurn] = useState('w')
   const socketRef = useRef(null)
 
   useEffect(() => {
@@ -38,13 +43,22 @@ export default function GamePage() {
     })
 
     socket.on('joined', (data) => {
-      setFen(data.fen)
+      setBoardRows(data.boardRows || 8)
+      setTurn(data.turn || 'w')
       setPlayerColor(isSpectator ? 'spectator' : data.color)
       setClocks(data.clocks || { w: 600, b: 600 })
       setPlayers(data.players || {})
       if (data.color === 'spectator') setMessage('Watching as spectator')
       else setMessage(data.color === 'w' ? 'You play White. Waiting for opponent...' : 'You play Black. Waiting for opponent...')
 
+      if (data.boardRows && data.boardRows !== 8) {
+        setBoard(data.board)
+        setLegalMovesByFrom(data.legalMovesByFrom || {})
+        setInCheck(data.inCheck || false)
+        return
+      }
+
+      setFen(data.fen)
       // Rebuild moves from pgn
       if (data.pgn) {
         const c = new Chess()
@@ -60,18 +74,35 @@ export default function GamePage() {
       setClocks(data.clocks || { w: 600, b: 600 })
       setGameStatus('playing')
       setMessage('')
+      if (data.turn) setTurn(data.turn)
+      if (data.boardRows && data.boardRows !== 8) {
+        if (data.board) setBoard(data.board)
+        if (data.legalMovesByFrom) setLegalMovesByFrom(data.legalMovesByFrom)
+      } else if (data.fen) {
+        setFen(data.fen)
+      }
     })
 
     socket.on('move_made', (data) => {
-      setFen(data.fen)
       setInCheck(data.inCheck || false)
       setClocks(data.clocks || clocks)
-      const c = new Chess()
-      try {
-        c.loadPgn(data.pgn)
-        setMoves(c.history())
-      } catch {}
       if (data.move) setLastMove({ from: data.move.from, to: data.move.to })
+
+      if (data.boardRows && data.boardRows !== 8) {
+        setBoard(data.board)
+        setLegalMovesByFrom(data.legalMovesByFrom || {})
+        setTurn(data.turn)
+        if (data.move?.notation) setMoves(prev => [...prev, data.move.notation])
+      } else {
+        setFen(data.fen)
+        setTurn(data.turn)
+        const c = new Chess()
+        try {
+          c.loadPgn(data.pgn)
+          setMoves(c.history())
+        } catch {}
+      }
+
       if (data.status !== 'playing') {
         setGameStatus('over')
         endGame(data.status, data.winner)
@@ -160,8 +191,6 @@ export default function GamePage() {
     socketRef.current?.emit('accept_draw', { roomId: id })
   }
 
-  const chess = new Chess(fen)
-  const turn = chess.turn()
   const isMyTurn = playerColor === turn
 
   const oppColor = playerColor === 'w' ? 'b' : 'w'
@@ -203,15 +232,30 @@ export default function GamePage() {
             <Clock seconds={clocks[topColor]} active={gameStatus === 'playing' && turn === topColor} label="" color={topColor} />
           </div>
 
-          <ChessBoard
-            fen={fen}
-            playerColor={playerColor === 'spectator' ? 'both' : playerColor}
-            onMove={handleMove}
-            lastMove={lastMove}
-            inCheck={inCheck}
-            disabled={gameStatus !== 'playing' || !isMyTurn || playerColor === 'spectator'}
-            flipped={flipped}
-          />
+          {boardRows === 8 ? (
+            <ChessBoard
+              fen={fen}
+              playerColor={playerColor === 'spectator' ? 'both' : playerColor}
+              onMove={handleMove}
+              lastMove={lastMove}
+              inCheck={inCheck}
+              disabled={gameStatus !== 'playing' || !isMyTurn || playerColor === 'spectator'}
+              flipped={flipped}
+            />
+          ) : (
+            <VariantChessBoard
+              board={board}
+              legalMovesByFrom={legalMovesByFrom}
+              rows={boardRows}
+              turn={turn}
+              playerColor={playerColor === 'spectator' ? 'both' : playerColor}
+              onMove={handleMove}
+              lastMove={lastMove}
+              inCheck={inCheck}
+              disabled={gameStatus !== 'playing' || !isMyTurn || playerColor === 'spectator'}
+              flipped={flipped}
+            />
+          )}
 
           {/* Bottom player */}
           <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', paddingRight: 8 }}>
